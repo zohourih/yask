@@ -44,11 +44,13 @@ IN THE SOFTWARE.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#ifndef WIN32
-#include <unistd.h>
 #include <stdint.h>
 #include <immintrin.h>
+
+#ifdef _WIN32
+typedef uint16_t __mmask16;
+#else
+#include <unistd.h>
 #endif
 
 // safe integer divide and mod.
@@ -169,7 +171,7 @@ namespace yask {
 #endif
 
     // conditional inlining
-#ifdef DEBUG
+#if defined(DEBUG) || defined(_WIN32)
 #define ALWAYS_INLINE inline
 #else
 #define ALWAYS_INLINE __attribute__((always_inline)) inline
@@ -438,7 +440,7 @@ namespace yask {
         }
     
         // aligned load.
-        ALWAYS_INLINE void loadFrom(const real_vec_t* __restrict__ from) {
+        ALWAYS_INLINE void loadFrom(const real_vec_t* __restrict from) {
 #if defined(NO_INTRINSICS) || defined(NO_LOAD_INTRINSICS)
             REAL_VEC_LOOP(i) u.r[i] = (*from)[i];
 #else
@@ -447,7 +449,7 @@ namespace yask {
         }
 
         // unaligned load.
-        ALWAYS_INLINE void loadUnalignedFrom(const real_vec_t* __restrict__ from) {
+        ALWAYS_INLINE void loadUnalignedFrom(const real_vec_t* __restrict from) {
 #if defined(NO_INTRINSICS) || defined(NO_LOAD_INTRINSICS)
             REAL_VEC_LOOP_UNALIGNED(i) u.r[i] = (*from)[i];
 #else
@@ -456,7 +458,7 @@ namespace yask {
         }
 
         // aligned store.
-        ALWAYS_INLINE void storeTo(real_vec_t* __restrict__ to) const {
+        ALWAYS_INLINE void storeTo(real_vec_t* __restrict to) const {
 
             // Using an explicit loop here instead of a store intrinsic may
             // allow the compiler to do more optimizations.  This is true

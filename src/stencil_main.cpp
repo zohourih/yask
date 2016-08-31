@@ -136,10 +136,10 @@ int main(int argc, char** argv)
     idx_t num_trials = 3; // number of trials.
     idx_t dt = 50;     // number of time-steps per trial.
     idx_t dn = 1, dx = DEF_RANK_SIZE, dy = DEF_RANK_SIZE, dz = DEF_RANK_SIZE;
-    idx_t rt = 1;                         // wavefront time steps.
-    idx_t rn = 0, rx = 0, ry = 0, rz = 0;  // region sizes (0 => use rank size).
-    idx_t bt = 1;                          // temporal block size.
-    idx_t bn = 1, bx = DEF_BLOCK_SIZE, by = DEF_BLOCK_SIZE, bz = DEF_BLOCK_SIZE;  // size of cache blocks.
+    idx_t rt = 1;                         // wavefront time steps (0 => use dt).
+    idx_t rn = 0, rx = 0, ry = 0, rz = 0;  // region sizes (0 => use d*).
+    idx_t bt = 0;                          // temporal block size (0 => use rt).
+    idx_t bn = 1, bx = DEF_BLOCK_SIZE, by = DEF_BLOCK_SIZE, bz = DEF_BLOCK_SIZE;  // size of cache blocks (0 => use r*).
     idx_t pn = 0, px = DEF_PAD, py = DEF_PAD, pz = DEF_PAD; // padding.
     idx_t nrn = 1, nrx = num_ranks, nry = 1, nrz = 1; // num ranks in each dim.
     bool validate = false;
@@ -172,7 +172,9 @@ int main(int argc, char** argv)
                     " -r{n,x,y,z} <n>  OpenMP region size in specified spatial dimension, defaults=" <<
                     rn << '*' << rx << '*' << ry << '*' << rz << endl <<
                     " -r <n>           set same OpenMP region size in 3 {x,y,z} spatial dimensions\n"
-                    " -b{n,x,y,z} <n>  cache block size in specified spatial dimension, defaults=" <<
+					" -bt <n>          cache-block time steps (for temporal blocking), default=" <<
+					bt << endl <<
+					" -b{n,x,y,z} <n>  cache block size in specified spatial dimension, defaults=" <<
                     bn << '*' << bx << '*' << by << '*' << bz << endl <<
                     " -b <n>           set same cache block size in 3 {x,y,z} spatial dimensions\n" <<
                     " -p{n,x,y,z} <n>  extra padding in specified spatial dimension, defaults=" <<
@@ -183,7 +185,6 @@ int main(int argc, char** argv)
                     nrn << '*' << nrx << '*' << nry << '*' << nrz << endl <<
                     " -nr <n>          set same num ranks in 3 {x,y,z} spatial dimensions\n" <<
 #endif
-                    " -i <n>           equivalent to -dt, for backward compatibility\n" <<
                     " -thread_factor <n>  divide the original number of available threads by n, default=" <<
                     thread_factor << endl <<
                     " -bthreads <n>    set number of threads to use for a block, default=" <<
@@ -194,13 +195,8 @@ int main(int argc, char** argv)
 #ifndef USE_MPI
                     " This binary has not been built with MPI support.\n"
 #endif
-                    " A block size of 0 => block size == region size in that dimension.\n"
-                    " A region size of 0 => region size == rank size in that dimension.\n"
-                    " Control the time steps in each temporal wave-front with -rt:\n"
-                    "  1 effectively disables wave-front tiling.\n"
-                    "  0 enables wave-front tiling across all time steps in one pass.\n"
-                    "  Any value other than 1 also changes the region spatial-size defaults.\n"
-                    " Temporal cache blocking is not yet supported => bt == 1.\n"
+                    " If rt == 0, then rt = dt (same for rn, rx, ry, rz).\n"
+                    " If bt == 0, then bt = rt (same for bn, bx, by, bz).\n"
                     " Validation is very slow and uses 2x memory, so run with very small sizes.\n"
                     " If validation fails, it may be due to rounding error; try building with 8-byte reals.\n"
                     " Validation disables warmup and sets the default number of trials to 1.\n"
@@ -232,7 +228,6 @@ int main(int argc, char** argv)
                 }
                 int val = atoi(argv[++argi]);
                 if (opt == "-t") num_trials = val;
-                else if (opt == "-i") dt = val;
                 else if (opt == "-dt") dt = val;
                 else if (opt == "-dn") dn = val;
                 else if (opt == "-dx") dx = val;
@@ -245,7 +240,8 @@ int main(int argc, char** argv)
                 else if (opt == "-ry") ry = val;
                 else if (opt == "-rz") rz = val;
                 else if (opt == "-r") rx = ry = rz = val;
-                else if (opt == "-bn") bn = val;
+				else if (opt == "-bt") bt = val;
+				else if (opt == "-bn") bn = val;
                 else if (opt == "-bx") bx = val;
                 else if (opt == "-by") by = val;
                 else if (opt == "-bz") bz = val;
@@ -347,22 +343,26 @@ int main(int argc, char** argv)
 #endif
     }
 
-    // Adjust defaults for wavefronts.
-    if (rt != 1) {
-        if (!rn) rn = 1;
-        if (!rx) rx = DEF_WAVEFRONT_REGION_SIZE;
-        if (!ry) ry = DEF_WAVEFRONT_REGION_SIZE;
-        if (!rz) rz = DEF_WAVEFRONT_REGION_SIZE;
+    // Adjust defaults.
+    if (rt == 0)
+        rt = dt;
+    if (bt == 0)
+        bt = rt;  // may be reduced later.
 
-        // TODO: enable this.
-        if (num_ranks > 1) {
+    if (num_ranks > 1) {
+        if (rt != 1) {
             cerr << "Sorry, MPI communication is not currently enabled with wave-front tiling." << endl;
+            exit(1);
         }
-    }
+        if (bt != 1) {
+			cerr << "Sorry, MPI communication is not currently enabled with temporal cache-blocks." << endl;
+            exit(1);
+        }
+	}
 
     // Round up vars as needed.
     dt = roundUp(dt, CPTS_T, "rank size in t (time steps)");
-    dn = roundUp(dn, CPTS_N, "rank size in n");
+	dn = roundUp(dn, CPTS_N, "rank size in n");
     dx = roundUp(dx, CPTS_X, "rank size in x");
     dy = roundUp(dy, CPTS_Y, "rank size in y");
     dz = roundUp(dz, CPTS_Z, "rank size in z");
@@ -483,6 +483,7 @@ int main(int argc, char** argv)
     // Stencil functions.
     idx_t scalar_fp_ops = 0;
     STENCIL_EQUATIONS stencils;
+    stencils.init(context);
     idx_t num_stencils = stencils.stencils.size();
     cout << endl;
     cout << "Num stencil equations: " << num_stencils << endl <<

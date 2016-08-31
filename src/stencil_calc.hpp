@@ -60,6 +60,7 @@ namespace yask {
         idx_t hn, hx, hy, hz;     // spatial halos (max over grids as required by stencil).
         idx_t pn, px, py, pz;     // spatial padding (extra to avoid aliasing).
         idx_t angle_n, angle_x, angle_y, angle_z; // temporal skewing angles.
+        idx_t rangle_n, rangle_x, rangle_y, rangle_z; // temporal wave-front region angles.
 
         // MPI.
         MPI_Comm comm;
@@ -245,12 +246,10 @@ namespace yask {
         virtual void calc_scalar(StencilContext& generic_context,
                                  idx_t t, idx_t n, idx_t x, idx_t y, idx_t z) =0;
 
-        // Calculate one block of results from begin to end-1 on each dimension.
-        // Note: this interface cannot support temporal blocking with >1 stencil because
-        // it only operates on one stencil.
-        virtual void calc_block(StencilContext& generic_context, idx_t bt,
-                                idx_t begin_bn, idx_t begin_bx, idx_t begin_by, idx_t begin_bz,
-                                idx_t end_bn, idx_t end_bx, idx_t end_by, idx_t end_bz) =0;
+        // Calculate one spatial block of results from begin to end-1 on each dimension.
+        virtual void calc_spatial_block(StencilContext& generic_context, idx_t bt,
+            idx_t begin_bn, idx_t begin_bx, idx_t begin_by, idx_t begin_bz,
+            idx_t end_bn, idx_t end_bx, idx_t end_by, idx_t end_bz) = 0;
 
         // Exchange halo data for the updated grids at the given time.
         virtual void exchange_halos(StencilContext& generic_context, idx_t start_dt, idx_t stop_dt);
@@ -323,7 +322,7 @@ namespace yask {
             _stencil.init(context);
         }
     
-        // Calculate one scalar result.
+        // Calculate one scalar result for this equation.
         // This function implements the interface in the base class.
         virtual void calc_scalar(StencilContext& generic_context, idx_t t, idx_t n, idx_t x, idx_t y, idx_t z) {
 
@@ -334,8 +333,8 @@ namespace yask {
             _stencil.calc_scalar(context, t, ARG_N(n) x, y, z);
         }
 
-        // Calculate results within a cluster of vectors.
-        // Called from calc_block().
+        // Calculate results within a cluster of vectors for this equation.
+        // Called from calc_spatial_block().
         // The begin/end_c* vars are the start/stop_b* vars from the block loops.
         ALWAYS_INLINE void
         calc_cluster (ContextClass& context, idx_t ct,
@@ -345,7 +344,7 @@ namespace yask {
             TRACE_MSG("%s.calc_cluster(%ld, %ld, %ld, %ld, %ld)",
                       get_name().c_str(), ct, begin_cnv, begin_cxv, begin_cyv, begin_czv);
 
-            // The step vars are hard-coded in calc_block below, and there should
+            // The step vars are hard-coded in calc_spatial_block below, and there should
             // never be a partial step at this level. So, we can assume one var and
             // exactly CLEN_d steps in each given direction d are calculated in this
             // function.  Thus, we can ignore the end_* vars in the calc function.
@@ -358,7 +357,7 @@ namespace yask {
             _stencil.calc_cluster(context, ct, ARG_N(begin_cnv) begin_cxv, begin_cyv, begin_czv);
         }
 
-        // Prefetch a cluster.
+        // Prefetch a cluster for this equation.
         PREFETCH_CLUSTER_METHOD(prefetch_cluster, prefetch_cluster)
 #if USING_DIM_N
         PREFETCH_CLUSTER_METHOD(prefetch_cluster_bnv, prefetch_cluster_n)
@@ -367,21 +366,22 @@ namespace yask {
         PREFETCH_CLUSTER_METHOD(prefetch_cluster_byv, prefetch_cluster_y)
         PREFETCH_CLUSTER_METHOD(prefetch_cluster_bzv, prefetch_cluster_z)
     
-        // Calculate results within a cache block.
+        // Calculate results within a spatial cache block for this equation.
         // This function implements the interface in the base class.
         // Each block is typically computed in a separate OpenMP task.
         // The begin/end_b* vars are the start/stop_r* vars from the region loops.
         virtual void
-        calc_block(StencilContext& generic_context, idx_t bt,
+        calc_spatial_block(StencilContext& generic_context, idx_t bt,
                    idx_t begin_bn, idx_t begin_bx, idx_t begin_by, idx_t begin_bz,
                    idx_t end_bn, idx_t end_bx, idx_t end_by, idx_t end_bz)
         {
-            TRACE_MSG("%s.calc_block(%ld, %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld)", 
-                      get_name().c_str(), bt,
-                      begin_bn, end_bn-1,
-                      begin_bx, end_bx-1,
-                      begin_by, end_by-1,
-                      begin_bz, end_bz-1);
+            TRACE_MSG("%s.calc_spatial_block(%ld, %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld)", 
+                      get_name().c_str(),
+                      bt,
+                      begin_bn, end_bn - 1,
+                      begin_bx, end_bx - 1,
+                      begin_by, end_by - 1,
+                      begin_bz, end_bz - 1);
 
             // Convert to a problem-specific context.
             auto context = dynamic_cast<ContextClass&>(generic_context);
@@ -420,10 +420,12 @@ namespace yask {
     };
 
     // Collection of all stencil equations to be evaluated.  This is also
-    // called the 'problem' being solved.  Unfortunately, this is also
-    // called the 'stencil' in the Makefile and foldBuilder for historical
-    // reasons (there used to be only one stencil equation allowed).
-    struct StencilEquations {
+    // called the 'problem' being solved. 
+    class StencilEquations {
+
+        bool _isInit;
+
+    public:
 
         // Name of the problem.
         std::string name;
@@ -431,14 +433,12 @@ namespace yask {
         // List of all stencil equations.
         StencilList stencils;
 
-        StencilEquations() {}
+        StencilEquations() : _isInit(false) {}
         virtual ~StencilEquations() {}
 
-        virtual void init(StencilContext& context) {
-            for (auto stencil : stencils)
-                stencil->init(context);
-        }
-    
+        // Initialize stencil equations and context.
+        virtual void init(StencilContext& context);
+
         // Reference stencil calculations.
         virtual void calc_rank_ref(StencilContext& context);
 
@@ -446,13 +446,24 @@ namespace yask {
         virtual void calc_rank_opt(StencilContext& context);
 
     protected:
-    
+
         // Calculate results within a region.
-        void calc_region(StencilContext& context, idx_t start_dt, idx_t stop_dt,
+        void calc_region(StencilContext& context,
+			             idx_t start_dt, idx_t stop_dt,
                          StencilSet& stencil_set,
                          idx_t start_dn, idx_t start_dx, idx_t start_dy, idx_t start_dz,
                          idx_t stop_dn, idx_t stop_dx, idx_t stop_dy, idx_t stop_dz);
     
+        // Calculate results within one or more spatial cache blocks that
+        // make up a temporal cache block.
+        void calc_temporal_block(StencilContext& context,
+            idx_t start_rt, idx_t stop_rt,
+            idx_t phase, StencilSet& stencil_set,
+            idx_t begin_rn, idx_t begin_rnx, idx_t begin_ry, idx_t begin_rz,
+            idx_t end_rn, idx_t end_rx, idx_t end_ry, idx_t end_rz,
+            idx_t start_rn, idx_t start_rx, idx_t start_ry, idx_t start_rz,
+            idx_t stop_rn, idx_t stop_rx, idx_t stop_ry, idx_t stop_rz);
+
     };
 }
 

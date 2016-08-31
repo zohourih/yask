@@ -89,7 +89,6 @@ time_dim_size	?=	1
 eqs		?=	velocity=vel_,stress=stress_
 def_rank_size	?=	640
 def_block_size	?=	32
-def_wavefront_region_size ?=	256
 
 ifeq ($(arch),knl)
 def_block_threads	?=	4
@@ -173,7 +172,6 @@ layout_3d			?=	Layout_123
 layout_4d			?=	Layout_1234
 def_rank_size			?=	1024
 def_block_size			?=	64
-def_wavefront_region_size	?=	512
 def_pad				?=	1
 
 # How to fold vectors (x*y*z).
@@ -235,7 +233,6 @@ MACROS		+=	LAYOUT_4D=$(layout_4d)
 MACROS		+=	TIME_DIM_SIZE=$(time_dim_size)
 MACROS		+=	DEF_RANK_SIZE=$(def_rank_size)
 MACROS		+=	DEF_BLOCK_SIZE=$(def_block_size)
-MACROS		+=	DEF_WAVEFRONT_REGION_SIZE=$(def_wavefront_region_size)
 MACROS		+=	DEF_BLOCK_THREADS=$(def_block_threads)
 MACROS		+=	DEF_THREAD_FACTOR=$(def_thread_factor)
 MACROS		+=	DEF_PAD=$(def_pad)
@@ -288,6 +285,7 @@ endif
 
 else # not Intel compiler
 CXXFLAGS	+=	$(GCXX_ISA) -Wno-unknown-pragmas -Wno-unused-variable
+MACROS		+=  _XOPEN_SOURCE=700
 
 endif # compiler.
 
@@ -313,11 +311,13 @@ RANK_LOOP_CODE		=	$(RANK_LOOP_OUTER_MODS) loop(dn,dx,dy,dz) \
 # spatial skewing for temporal wavefronts. The time loop may be found
 # in StencilEquations::calc_region().
 REGION_LOOP_OPTS	=     	-dims 'rn,rx,ry,rz' \
-				-ompConstruct '$(omp_par_for) schedule($(omp_schedule)) proc_bind(spread)' \
-				-calcPrefix 'stencil->calc_'
+				-ompConstruct '$(omp_par_for) schedule($(omp_schedule)) proc_bind(spread)'
 REGION_LOOP_OUTER_MODS	?=	square_wave serpentine omp
 REGION_LOOP_CODE	=	$(REGION_LOOP_OUTER_MODS) loop(rn,rx,ry,rz) \
-				{ $(REGION_LOOP_INNER_MODS) calc(block(rt)); }
+				{ $(REGION_LOOP_INNER_MODS) calc(temporal_block(start_rt, stop_rt, \
+				                                 phase, stencil_set, \
+				                                 begin_rn, begin_rx, begin_ry, begin_rz, \
+												 end_rn, end_rx, end_ry, end_rz)); }
 
 # Block loops break up a block into vector clusters.
 # The indices at this level are by vector instead of element;

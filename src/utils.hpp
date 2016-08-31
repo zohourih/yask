@@ -36,15 +36,25 @@ IN THE SOFTWARE.
 #include <string>
 #include <iostream>
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 // rounding macros for integer types.
 #define CEIL_DIV(numer, denom) (((numer) + (denom) - 1) / (denom))
 #define ROUND_UP(n, mult) (CEIL_DIV(n, mult) * (mult))
 
 namespace yask {
 
-    // Some utility functions.
+#ifdef _WIN32
+	inline unsigned int sleep(unsigned int seconds) {
+		Sleep(seconds * 1000);
+		return 0;
+	}
+#endif
+
     extern double getTimeInSecs();
-    extern idx_t roundUp(idx_t dim, idx_t mult, std::string name);
+	extern idx_t roundUp(idx_t dim, idx_t mult, std::string name);
     extern std::string printWithPow2Multiplier(double num);
     extern std::string printWithPow10Multiplier(double num);
 }

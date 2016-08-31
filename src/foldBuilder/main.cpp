@@ -272,7 +272,7 @@ int main(int argc, const char* argv[]) {
     
     // Reference to the grids and params in the stencil.
     Grids& grids = stencilFunc->getGrids();
-    Params& params = stencilFunc->getParams();
+    //Params& params = stencilFunc->getParams();
 
     // Create a union of all dimensions in all grids.
     // Also keep count of how many grids have each dim.

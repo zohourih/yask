@@ -34,6 +34,67 @@ using namespace std;
 
 namespace yask {
 
+    // Initialize stencil equations and context.
+    void StencilEquations::init(StencilContext& context)
+    {
+        if (_isInit)
+            return;
+
+        // Init each stencil equation.
+        for (auto stencil : stencils)
+            stencil->init(context);
+
+        // Determine spatial skewing angles based on the
+        // halos.  This assumes the smallest granularity of calculation is
+        // CPTS_* in each dim.
+        // These angles are used for both regions and blocks.
+        context.angle_n = ROUND_UP(context.hn, CPTS_N);
+        context.angle_x = ROUND_UP(context.hx, CPTS_X);
+        context.angle_y = ROUND_UP(context.hy, CPTS_Y);
+        context.angle_z = ROUND_UP(context.hz, CPTS_Z);
+        cout << "Temporal skewing angles: " <<
+            context.angle_n << ", " << context.angle_x << ", " << context.angle_y << ", " << context.angle_z << endl;
+
+        // Temporal blocking only supported in x, y, z dims.
+        if (context.rt > 1 && context.bt > 1 && context.angle_n > 0) {
+            cerr << "Sorry, temporal cache-blocking is not yet supported in the 'n' dimension." << endl;
+            exit(1);
+        }
+
+        // Determine max temporal-block time size.
+        // This is the max "height" of the hyper-pyramid
+        // based on its spatial base sizes and angles.
+        idx_t max_bt = min(context.bt, context.rt);
+        if (context.angle_n > 0)
+            max_bt = min(max_bt, context.bn / context.angle_n / 2 + 1);
+        if (context.angle_x > 0)
+            max_bt = min(max_bt, context.bx / context.angle_x / 2 + 1);
+        if (context.angle_y > 0)
+            max_bt = min(max_bt, context.by / context.angle_y / 2 + 1);
+        if (context.angle_z > 0)
+            max_bt = min(max_bt, context.bz / context.angle_z / 2 + 1);
+        cout << "Maximum allowed cache-block time-steps (bt): " << max_bt << endl;
+        if (max_bt < context.bt) 
+            context.bt = max_bt;
+            cout << "Actual cache-block time-steps (bt): " << context.bt << endl;
+
+        // We only need non-zero *region* angles if the region size is less than the rank size,
+        // i.e., if the region covers the whole rank in a given dimension, no wave-front
+        // is needed in thar dim.
+        // These angles are used for regions boundaries only. In a given dimension,
+        // a block may have non-zero angles, but its region may not.
+        // TODO: make this grid-specific.
+        context.rangle_n = (context.rn < context.dn) ? context.angle_n : 0;
+        context.rangle_x = (context.rx < context.dx) ? context.angle_x : 0;
+        context.rangle_y = (context.ry < context.dy) ? context.angle_y : 0;
+        context.rangle_z = (context.rz < context.dz) ? context.angle_z : 0;
+        cout << "Wave-front region angles: :" <<
+            context.rangle_n << ", " << context.rangle_x << ", " << context.rangle_y << ", " << context.rangle_z << endl;
+
+        _isInit = true;
+    }
+
+
     ///// Top-level methods for evaluating reference and optimized stencils.
 
     // Eval stencil(s) over grid(s) using scalar code.
@@ -120,21 +181,7 @@ namespace yask {
         idx_t step_dy = context.ry;
         idx_t step_dz = context.rz;
 
-        // Determine spatial skewing angles for temporal wavefronts based on the
-        // halos.  This assumes the smallest granularity of calculation is
-        // CPTS_* in each dim.
-        // We only need non-zero angles if the region size is less than the rank size,
-        // i.e., if the region covers the whole rank in a given dimension, no wave-front
-        // is needed in thar dim.
-        // TODO: make this grid-specific.
-        context.angle_n = (context.rn < context.dn) ? ROUND_UP(context.hn, CPTS_N) : 0;
-        context.angle_x = (context.rx < context.dx) ? ROUND_UP(context.hx, CPTS_X) : 0;
-        context.angle_y = (context.ry < context.dy) ? ROUND_UP(context.hy, CPTS_Y) : 0;
-        context.angle_z = (context.rz < context.dz) ? ROUND_UP(context.hz, CPTS_Z) : 0;
-        TRACE_MSG("wavefront angles: %ld, %ld, %ld, %ld",
-                  context.angle_n, context.angle_x, context.angle_y, context.angle_z);
-    
-        // Extend end points for overlapping regions due to wavefront angle.
+        // Extend end points for regions due to wavefront angle.
         // For each subsequent time step in a region, the spatial location of
         // each block evaluation is shifted by the angle for each stencil. So,
         // the total shift in a region is the angle * num stencils * num
@@ -143,11 +190,12 @@ namespace yask {
         // TODO: calculate stencil inter-dependency in the foldBuilder for each
         // dimension.
         idx_t nshifts = (idx_t(stencils.size()) * context.rt) - 1;
-        end_dn += context.angle_n * nshifts;
-        end_dx += context.angle_x * nshifts;
-        end_dy += context.angle_y * nshifts;
-        end_dz += context.angle_z * nshifts;
-        TRACE_MSG("virtual domain after wavefront adjustment: %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld", 
+        end_dn += context.rangle_n * nshifts;
+        end_dx += context.rangle_x * nshifts;
+        end_dy += context.rangle_y * nshifts;
+        end_dz += context.rangle_z * nshifts;
+        TRACE_MSG("extended domain after wave-front adjustment for %ld shift(s): %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld", 
+            nshifts,
                   begin_dt, end_dt-1,
                   begin_dn, end_dn-1,
                   begin_dx, end_dx-1,
@@ -181,7 +229,7 @@ namespace yask {
                 }
             }
 
-            // If doing more than one time step in a region (temporal wave-front),
+            // If doing more than one time step in a region,
             // must do all equations in calc_region().
             // TODO: allow doing all equations in region even with one time step for testing.
             else {
@@ -208,17 +256,38 @@ namespace yask {
     // In it, we loop over the time steps and the stencil
     // equations and evaluate the blocks in the region.
     void StencilEquations::
-    calc_region(StencilContext& context, idx_t start_dt, idx_t stop_dt,
-                StencilSet& stencil_set,
-                idx_t start_dn, idx_t start_dx, idx_t start_dy, idx_t start_dz,
-                idx_t stop_dn, idx_t stop_dx, idx_t stop_dy, idx_t stop_dz)
+    calc_region(StencilContext& context,
+        
+        // temporal range for this block.
+        idx_t begin_rt, idx_t end_rt,
+
+        // stencils to eval.
+        StencilSet& stencil_set,
+
+        // initial boundaries of region (for 1st stencil at begin_rt). 
+        idx_t begin_rn0, idx_t begin_rx0, idx_t begin_ry0, idx_t begin_rz0,
+        idx_t end_rn0, idx_t end_rx0, idx_t end_ry0, idx_t end_rz0)
     {
-        TRACE_MSG("calc_region(%ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld)", 
-                  start_dt, stop_dt-1,
-                  start_dn, stop_dn-1,
-                  start_dx, stop_dx-1,
-                  start_dy, stop_dy-1,
-                  start_dz, stop_dz-1);
+        TRACE_MSG("calc_region(%ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld)",
+            begin_rt, end_rt - 1,
+            begin_rn0, end_rn0 - 1,
+            begin_rx0, end_rx0 - 1,
+            begin_ry0, end_ry0 - 1,
+            begin_rz0, end_rz0 - 1);
+
+        // Set number of threads for a region.
+        context.set_region_threads();
+
+        // Set begin and end of region used by stencil_region_loops.hpp.
+        // These will be adjusted by the temporal shift angles if applicable.
+        idx_t begin_rn = begin_rn0;
+        idx_t end_rn = end_rn0;
+        idx_t begin_rx = begin_rx0;
+        idx_t end_rx = end_rx0;
+        idx_t begin_ry = begin_ry0;
+        idx_t end_ry = end_ry0;
+        idx_t begin_rz = begin_rz0;
+        idx_t end_rz = end_rz0;
 
         // Steps within a region are based on block sizes.
         const idx_t step_rt = context.bt;
@@ -227,87 +296,331 @@ namespace yask {
         const idx_t step_ry = context.by;
         const idx_t step_rz = context.bz;
 
-        // Not yet supporting temporal blocking.
-        if (step_rt != 1) {
-            cerr << "Error: temporal blocking not yet supported." << endl;
-            assert(step_rt == 1);
-            exit(1);                // in case assert() is not active.
-        }
+        // Temporal shifts per block.
+        idx_t nshifts = idx_t(stencil_set.size()) * context.bt;
 
-        // Number of iterations to get from start_dt to (but not including) stop_dt,
+        // Number of iterations to get from begin_rt to (but not including) end_rt,
         // stepping by step_rt.
-        const idx_t num_rt = ((stop_dt - start_dt) + (step_rt - 1)) / step_rt;
-    
+        const idx_t num_rt = ((end_rt - begin_rt) + (step_rt - 1)) / step_rt;
+
         // Step through time steps in this region.
         for (idx_t index_rt = 0; index_rt < num_rt; index_rt++) {
-        
+
             // This value of index_rt covers rt from start_rt to stop_rt-1.
-            const idx_t start_rt = start_dt + (index_rt * step_rt);
-            const idx_t stop_rt = min (start_rt + step_rt, stop_dt);
+            const idx_t start_rt = begin_rt + (index_rt * step_rt);
+            const idx_t stop_rt = min(start_rt + step_rt, end_rt);
 
-            // TODO: remove this when temporal blocking is implemented.
-            assert(stop_rt == start_rt + 1);
-            const idx_t rt = start_rt; // only one time value needed for block.
+            // There are 4 phases required to properly tesselate 4D space
+            // when using 3D temporal blocks (ignoring 'n' because it must have 0 angle).
+            idx_t nphases = (context.bt > 1) ? 4 : 1;
+            for (idx_t phase = 0; phase < nphases; phase++) {
 
-            // equations to evaluate at this time step.
-            for (auto stencil : stencils) {
-                if (stencil_set.count(stencil)) {
-
-                    // Actual region boundaries must stay within rank domain.
-                    idx_t begin_rn = max<idx_t>(start_dn, 0);
-                    idx_t end_rn = min<idx_t>(stop_dn, context.dn);
-                    idx_t begin_rx = max<idx_t>(start_dx, 0);
-                    idx_t end_rx = min<idx_t>(stop_dx, context.dx);
-                    idx_t begin_ry = max<idx_t>(start_dy, 0);
-                    idx_t end_ry = min<idx_t>(stop_dy, context.dy);
-                    idx_t begin_rz = max<idx_t>(start_dz, 0);
-                    idx_t end_rz = min<idx_t>(stop_dz, context.dz);
-
-                    // Only need to loop through the region if any of its blocks are
-                    // at least partly inside the domain. For overlapping regions,
-                    // they may start outside the domain but enter the domain as
-                    // time progresses and their boundaries shift. So, we don't want
-                    // to return if this condition isn't met.
-                    if (end_rn > begin_rn &&
-                        end_rx > begin_rx &&
-                        end_ry > begin_ry &&
-                        end_rz > begin_rz) {
-
-                        // Set number of threads for a region.
-                        context.set_region_threads();
-
-                        // Include automatically-generated loop code that calls
-                        // calc_block() for each block in this region.  Loops
-                        // through n from begin_rn to end_rn-1; similar for x, y,
-                        // and z.  This code typically contains OpenMP loop(s).
+                // Include automatically-generated loop code that calls
+                // calc_temporal_block() for each block in this region.  Loops
+                // through rn from begin_rn to end_rn-1; similar for rx, ry,
+                // and rz.  This code typically contains OpenMP loop(s)
+                // such that blocks are evaluated in parallel.
 #include "stencil_region_loops.hpp"
+            }
 
-                        // Reset threads back to max.
-                        context.set_max_threads();
-                    }
-            
-                    // Shift spatial region boundaries for next iteration to
-                    // implement temporal wavefront.  We only shift backward, so
-                    // region loops must increment. They may do so in any order.
-                    start_dn -= context.angle_n;
-                    stop_dn -= context.angle_n;
-                    start_dx -= context.angle_x;
-                    stop_dx -= context.angle_x;
-                    start_dy -= context.angle_y;
-                    stop_dy -= context.angle_y;
-                    start_dz -= context.angle_z;
-                    stop_dz -= context.angle_z;
+            // Shift spatial region boundaries for next iteration to
+            // implement temporal wavefront.  We only shift backward, so
+            // region loops must increment. They may do so in any order.
+            begin_rn -= context.rangle_n * nshifts;
+            end_rn -= context.rangle_n * nshifts;
+            begin_rx -= context.rangle_x * nshifts;
+            end_rx -= context.rangle_x * nshifts;
+            begin_ry -= context.rangle_y * nshifts;
+            end_ry -= context.rangle_y * nshifts;
+            begin_rz -= context.rangle_z * nshifts;
+            end_rz -= context.rangle_z * nshifts;
 
-                }            
-            } // stencil equations.
         } // time.
+
+        // Reset threads back to max.
+        context.set_max_threads();
     }
 
+    // Calculate results in one temporal block.
+    // A temporal block is composed of one or more spatial blocks.
+    // There will be exactly one spatial block if temporal blocking
+    // is not being used, i.e., bt==1 and/or rt==1.
+    // Typically, this is called in parallel for many blocks via OpenMP.
+    // Then, within a spatial block, nested OpenMP may be used.
+    void StencilEquations::calc_temporal_block(StencilContext& context,
+
+        // Temporal range for this block.
+        idx_t begin_bt, idx_t end_bt,
+
+        // Tesselation phase.
+        idx_t phase,
+
+        // Stencils to eval.
+        StencilSet& stencil_set,
+
+        // Initial boundaries of region for this block (for 1st stencil at begin_bt).
+        // If rt > bt, the regions boundaries at one time will NOT be the same
+        // as those from a different time due to the region skewing angles.
+        idx_t begin_rn0, idx_t begin_rx0, idx_t begin_ry0, idx_t begin_rz0,
+        idx_t end_rn0, idx_t end_rx0, idx_t end_ry0, idx_t end_rz0,
+
+        // Initial boundaries of block in the region (for 1st stencil at begin_bt).
+        // If rt > bt, the blocks at one time will NOT "line up" with the blocks
+        // from a different time.
+        idx_t begin_bn0, idx_t begin_bx0, idx_t begin_by0, idx_t begin_bz0,
+        idx_t end_bn0, idx_t end_bx0, idx_t end_by0, idx_t end_bz0)
+    {
+        TRACE_MSG("calc_temporal_block(phase %ld, %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld, %ld..%ld)",
+            phase,
+            begin_bt, end_bt - 1,
+            begin_bn0, end_bn0 - 1,
+            begin_bx0, end_bx0 - 1,
+            begin_by0, end_by0 - 1,
+            begin_bz0, end_bz0 - 1);
+
+        // Determine which (if any) edges of this block (begin_bn0..end_bz0) are against 
+        // the region boundary (begin_rn0..end_rz0).
+        // In other words, is this a starting and/or ending block in
+        // the given direction(s)?
+        bool at_begin_rn = begin_bn0 == begin_rn0;
+        bool at_end_rn = end_bn0 == end_rn0;
+        bool at_begin_rx = begin_bx0 == begin_rx0;
+        bool at_end_rx = end_bx0 == end_rx0;
+        bool at_begin_ry = begin_by0 == begin_ry0;
+        bool at_end_ry = end_by0 == end_ry0;
+        bool at_begin_rz = begin_bz0 == begin_rz0;
+        bool at_end_rz = end_bz0 == end_rz0;
+
+        // Steps within a block are based on the cluster size.
+        const idx_t step_bt = CPTS_T; // usually 1.
+        const idx_t step_bn = CPTS_N;
+        const idx_t step_bx = CPTS_X;
+        const idx_t step_by = CPTS_Y;
+        const idx_t step_bz = CPTS_Z;
+
+        // How many parts are in this phase?
+        idx_t nparts = (phase == 1 || phase == 2) ? 3 : 1;
+
+        // Loop through parts.
+        for (idx_t part = 0; part < nparts; part++) {
+
+            // Temporal shift counter.
+            idx_t tshift = 0;
+
+            // Number of iterations to get from begin_bt to (but not including) end_bt,
+            // stepping by step_bt.
+            const idx_t num_bt = ((end_bt - begin_bt) + (step_bt - 1)) / step_bt;
+
+            // Step through time steps in this block.
+            for (idx_t index_bt = 0; index_bt < num_bt; index_bt++) {
+
+                // This value of index_bt covers bt from start_bt to stop_bt-1.
+                const idx_t start_bt = begin_bt + (index_bt * step_bt);
+                const idx_t stop_bt = min(start_bt + step_bt, end_bt);
+
+                // Equations to evaluate at these time step(s).
+                // Shifting occurs in this loop to support staggered grids.
+                for (auto stencil : stencils) {
+                    if (stencil_set.count(stencil)) {
+
+                        // Calculate boundaries of *region* for this spatial block.
+                        // The original parameters, begin_rn..end_rz describe the boundaries
+                        // of the region at begin_bt only. In addition, they are may extend
+                        // outside of the rank domain.
+                        // Now, we need to shift begin_rn..end_rz due to any region angles
+                        // rangle_n..rangle_z and clamp the boundaries to the rank domain.
+                        // All these shifts are negative because these are region boundaries
+                        // (see calc_region()).
+                        // TODO: may need to enhance this when MPI enabled with temporal blocking.
+                        idx_t begin_rn = max(begin_rn0 - context.rangle_n * tshift, idx_t(0));
+                        idx_t end_rn = min(end_rn0 - context.rangle_n * tshift, context.dn);
+                        idx_t begin_rx = max(begin_rx0 - context.rangle_x * tshift, idx_t(0));
+                        idx_t end_rx = min(end_rx0 - context.rangle_x * tshift, context.dx);
+                        idx_t begin_ry = max(begin_ry0 - context.rangle_y * tshift, idx_t(0));
+                        idx_t end_ry = min(end_ry0 - context.rangle_y * tshift, context.dy);
+                        idx_t begin_rz = max(begin_rz0 - context.rangle_z * tshift, idx_t(0));
+                        idx_t end_rz = min(end_rz0 - context.rangle_z * tshift, context.dz);
+
+                        // Shift amounts in this block for this time and stencil.
+                        idx_t shift_n = context.angle_n * tshift;
+                        idx_t shift_x = context.angle_x * tshift;
+                        idx_t shift_y = context.angle_y * tshift;
+                        idx_t shift_z = context.angle_z * tshift;
+
+                        // The spatial block is described by begin_bn..end_rz.
+                        // The phase and part determine what shape is created.
+                        // Phase 0: start with spatial block that fills space; shrink
+                        // it (increase begin and decrease end) each time-step.
+                        idx_t begin_bn = begin_bn0 + shift_n;
+                        idx_t end_bn = end_bn0 - shift_n;
+                        idx_t begin_bx = begin_bx0 + shift_x;
+                        idx_t end_bx = end_bx0 - shift_x;
+                        idx_t begin_by = begin_by0 + shift_y;
+                        idx_t end_by = end_by0 - shift_y;
+                        idx_t begin_bz = begin_bz0 + shift_z;
+                        idx_t end_bz = end_bz0 - shift_z;
+
+                        // If at any region boundary, reset block boundary to match it.
+                        if (at_begin_rn) begin_bn = begin_rn;
+                        if (at_end_rn) end_bn = end_rn;
+                        if (at_begin_rx) begin_bx = begin_rx;
+                        if (at_end_rx) end_bx = end_rx;
+                        if (at_begin_ry) begin_by = begin_ry;
+                        if (at_end_ry) end_by = end_ry;
+                        if (at_begin_rz) begin_bz = begin_rz;
+                        if (at_end_rz) end_bz = end_rz;
+
+                        // Determine beginning of *next* phase-0 block in each dim.
+                        // This will be needed by phases 1-3.
+                        // The next block will be created by a different call to
+                        // calc_temporal_block().
+                        idx_t begin_next_bx = end_bx0 + shift_x;
+                        idx_t begin_next_by = end_by0 + shift_y;
+                        idx_t begin_next_bz = end_bz0 + shift_z;
+
+                        // Phase 1: fill in between phase-0 shapes.
+                        // Start with space between a pair of shapes and expand it.
+                        if (phase == 1) {
+
+                            // Part 0 (x): n, y, and z dims track phase 0, but
+                            // x dim grows to fill space between phase-0 shape in this
+                            // block and phase-0 shape in *next* block in x-dim.
+                            if (part == 0) {
+
+                                // Start at end of phase-0 x-face, calculated above.
+                                begin_bx = end_bx; 
+
+                                // Extend to next phase-0 x-face.
+                                end_bx = begin_next_bx;
+                            }
+
+                            // Part 1 (y): n, x, and z dims track phase 0, but
+                            // y dim grows to fill space between phase-0 shape in this
+                            // block and phase-0 shape in *next* block in y-dim.
+                            else if (part == 1) {
+
+                                // Start at end of phase-0 y-face, calculated above.
+                                begin_by = end_by;
+
+                                // Extend to next phase-0 y-face.
+                                end_by = begin_next_by;
+                            }
+
+                            // Part 2 (z): n, x, and y dims track phase 0, but
+                            // z dim grows to fill space between phase-0 shape in this
+                            // block and phase-0 shape in *next* block in z-dim.
+                            else if (part == 2) {
+
+                                // Start at end of phase-0 z-face, calculated above.
+                                begin_bz = end_bz;
+
+                                // Extend to next phase-0 z-face.
+                                end_bz = begin_next_bz;
+                            }
+                        }
+
+                        // Phase 2: fill in between phase-1 shapes.
+                        else if (phase == 2) {
+
+                            // Part 0 (xy): n and z dims track phase 1, but
+                            // x and y dims grow to fill space between x and y
+                            // phase-1 shapes in this block and next x and y
+                            // phase-1 shapes in *next* block.
+                            if (part == 0) {
+
+                                // Start and end of phase-0 x and y faces, calculated above.
+                                begin_bx = end_bx;
+                                begin_by = end_by;
+
+                                // Extend to phase-0 x and y faces of next block.
+                                end_bx = begin_next_bx;
+                                end_by = begin_next_by;
+                            }
+
+                            // Part 1 (xz): n and y dims track phase 1, but
+                            // x and z dims grow to fill space between x and z
+                            // phase-1 shapes in this block and next x and z
+                            // phase-1 shapes in *next* block.
+                            else if (part == 1) {
+
+                                // Start and end of phase-0 x and z faces, calculated above.
+                                begin_bx = end_bx;
+                                begin_bz = end_bz;
+
+                                // Extend to phase-0 x and z faces of next block.
+                                end_bx = begin_next_bx;
+                                end_bz = begin_next_bz;
+                            }
+
+                            // Part 2 (yz): n and x dims track phase 1, but
+                            // y and z dims grow to fill space between y and z
+                            // phase-1 shapes in this block and next y and z
+                            // phase-1 shapes in *next* block.
+                            else if (part == 2) {
+
+                                // Start and end of phase-0 y and z faces, calculated above.
+                                begin_by = end_by;
+                                begin_bz = end_bz;
+
+                                // Extend to phase-0 y and z faces of next block.
+                                end_by = begin_next_by;
+                                end_bz = begin_next_bz;
+                            }
+                        }
+
+                        // Phase 3: fill in between phase-2 shapes.
+                        // This will grow in all dimensions (opposite of phase-0).
+                        // TODO: fuse phase 3 with phase 1 to create hyper-diamonds
+                        // instead of hyper-pyramids. Will require alignment between
+                        // blocks.
+                        else if (phase == 3) {
+
+                            // Start and end of phase-0 faces, calculated above.
+                            begin_bx = end_bx;
+                            begin_by = end_by;
+                            begin_bz = end_bz;
+
+                            // Extend to phase-0 faces of next block.
+                            end_bx = begin_next_bx;
+                            end_by = begin_next_by;
+                            end_bz = begin_next_bz;
+                        }
+
+                        // Always clamp to region boundaries.
+                        begin_bn = max(begin_bn, begin_rn);
+                        end_bn = min(end_bn, end_rn);
+                        begin_bx = max(begin_bx, begin_rx);
+                        end_bx = min(end_bx, end_rx);
+                        begin_by = max(begin_by, begin_ry);
+                        end_by = min(end_by, end_ry);
+                        begin_bz = max(begin_bz, begin_rz);
+                        end_bz = min(end_bz, end_rz);
+
+                        // Only need to loop through the block if all ranges are > 0.
+                        if (end_bn > begin_bn &&
+                            end_bx > begin_bx &&
+                            end_by > begin_by &&
+                            end_bz > begin_bz) {
+
+                            // Calculate a spatial block at time start_bt.
+                            stencil->calc_spatial_block(context, start_bt,
+                                begin_bn, begin_bx, begin_by, begin_bz,
+                                end_bn, end_bx, end_by, end_bz);
+                        }
+
+                        tshift++;
+                    } // stencil in set.
+                } // stencil equations.
+            } // time.
+        } // part of phase.
+    }
+
+
     // Exchange halo data for the given time.
-    void StencilBase::exchange_halos(StencilContext& context, idx_t start_dt, idx_t stop_dt)
+    void StencilBase::exchange_halos(StencilContext& context, idx_t begin_rt, idx_t end_rt)
     {
 #ifdef USE_MPI
-        TRACE_MSG("exchange_halos(%ld..%ld)", start_dt, stop_dt);
+        TRACE_MSG("exchange_halos(%ld..%ld)", begin_rt, end_rt);
         double start_time = getTimeInSecs();
 
         // These vars control blocking within halo packing.
@@ -410,7 +723,7 @@ namespace yask {
                          idx_t end_zv = end_z / VLEN_Z;
 
                          // TODO: fix this when MPI + wave-front is enabled.
-                         idx_t t = start_dt;
+                         idx_t t = begin_rt;
                          
                          // Define calc_halo() to copy a vector from main grid to sendBuf.
                          // Index sendBuf using index_* vars because they are zero-based.
@@ -526,7 +839,7 @@ namespace yask {
                          idx_t end_zv = end_z / VLEN_Z;
 
                          // TODO: fix this when MPI + wave-front is enabled.
-                         idx_t t = start_dt;
+                         idx_t t = begin_rt;
                          
                          // Define calc_halo to copy data from rcvBuf into main grid.
 #define calc_halo(context, t,                                           \
