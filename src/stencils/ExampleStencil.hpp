@@ -167,11 +167,11 @@ protected:
         for (int r = 1; r <= _radius; r++) {
 
             v += coeff(-r, 0, 0) * data(t, x-r, y, z);
-		  v += coeff(+r, 0, 0) * data(t, x+r, y, z);
-		  v += coeff(0, -r, 0) * data(t, x, y-r, z);
-		  v += coeff(0, +r, 0) * data(t, x, y+r, z);
-		  v += coeff(0, 0, -r) * data(t, x, y, z-r);
-		  v += coeff(0, 0, +r) * data(t, x, y, z+r);
+            v += coeff(+r, 0, 0) * data(t, x+r, y, z);
+            v += coeff(0, -r, 0) * data(t, x, y-r, z);
+            v += coeff(0, +r, 0) * data(t, x, y+r, z);
+            v += coeff(0, 0, -r) * data(t, x, y, z-r);
+            v += coeff(0, 0, +r) * data(t, x, y, z+r);
         }
     }
 
@@ -194,9 +194,9 @@ protected:
         for (int r = 1; r <= _radius; r++) {
 
             v += coeff(-r, 0) * data(t, x-r, y);
-		  v += coeff(+r, 0) * data(t, x+r, y);
-		  v += coeff(0, -r) * data(t, x, y-r);
-		  v += coeff(0, +r) * data(t, x, y+r);
+            v += coeff(+r, 0) * data(t, x+r, y);
+            v += coeff(0, -r) * data(t, x, y-r);
+            v += coeff(0, +r) * data(t, x, y+r);
         }
     }
 
