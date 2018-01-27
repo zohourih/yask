@@ -41,6 +41,10 @@ ifeq ($(stencil),)
 else ifeq ($(stencil),3axis)
  MACROS		+=	MAX_EXCH_DIST=1
  radius		=	6
+ 
+else ifeq ($(stencil),3axismod)
+ MACROS		+=	MAX_EXCH_DIST=1
+ radius		=	6
 
 else ifeq ($(stencil),9axis)
  MACROS		+=	MAX_EXCH_DIST=2

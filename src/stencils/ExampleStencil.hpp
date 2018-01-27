@@ -112,6 +112,33 @@ public:
 
 REGISTER_STENCIL(AxisStencil);
 
+// Add points from x, y, and z axes.
+class AxisModStencil : public ExampleStencil {
+protected:
+
+    // Add additional points to v.
+    virtual void addPoints(GridValue& v)
+    {
+        for (int r = 1; r <= _radius; r++) {
+
+            v += coeff(-r, 0, 0) * data(t, x-r, y, z);
+		  v += coeff(+r, 0, 0) * data(t, x+r, y, z);
+		  v += coeff(0, -r, 0) * data(t, x, y-r, z);
+		  v += coeff(0, +r, 0) * data(t, x, y+r, z);
+		  v += coeff(0, 0, -r) * data(t, x, y, z-r);
+		  v += coeff(0, 0, +r) * data(t, x, y, z+r);
+        }
+    }
+
+public:
+    AxisModStencil(StencilList& stencils, int radius=2) :
+        ExampleStencil("3axismod", stencils, radius) { }
+    AxisModStencil(const string& name, StencilList& stencils, int radius=2) :
+        ExampleStencil(name, stencils, radius) { }
+};
+
+REGISTER_STENCIL(AxisModStencil);
+
 // Add points from x-y, x-z, and y-z diagonals.
 class DiagStencil : public AxisStencil {
 protected:
