@@ -74,6 +74,51 @@ public:
     }
 };
 
+class ExampleStencil2D : public StencilRadiusBase {
+
+protected:
+
+    // Indices & dimensions.
+    MAKE_STEP_INDEX(t);           // step in time dim.
+    MAKE_DOMAIN_INDEX(x);         // spatial dim.
+    MAKE_DOMAIN_INDEX(y);         // spatial dim.
+
+    // Vars.
+    MAKE_GRID(data, t, x, y);     // time-varying 2D grid.
+    
+    // Return a coefficient.  Note: This returns completely fabricated
+    // values only for illustrative purposes; they have no mathematical
+    // significance.
+    virtual double coeff(int di, int dj) const {
+        int sumAbs = abs(di) + abs(dj);
+        if (sumAbs == 0)
+            return 0.9;
+        double sumSq = double(di*di) + double(dj*dj);
+        double num = (sumAbs % 2 == 0) ? -0.8 : 0.8;
+        return num / sumSq;
+    }
+
+    // Add additional points to expression v.
+    virtual void addPoints(GridValue& v) =0;
+    
+public:
+    ExampleStencil2D(const string& name, StencilList& stencils, int radius=2) :
+        StencilRadiusBase(name, stencils, radius) { }
+
+    // Define equation at t+1 based on values at t.
+    virtual void define() {
+
+        // start with center point.
+        GridValue v = coeff(0, 0) * data(t, x, y);
+
+        // Add additional points from derived class.
+        addPoints(v);
+
+        // define the value at t+1 to be equivalent to v.
+        data(t+1, x, y) EQUALS v;
+    }
+};
+
 // Add points from x, y, and z axes.
 class AxisStencil : public ExampleStencil {
 protected:
@@ -138,6 +183,31 @@ public:
 };
 
 REGISTER_STENCIL(AxisModStencil);
+
+// Add points from x and y axes.
+class AxisModStencil2D : public ExampleStencil2D {
+protected:
+
+    // Add additional points to v.
+    virtual void addPoints(GridValue& v)
+    {
+        for (int r = 1; r <= _radius; r++) {
+
+            v += coeff(-r, 0) * data(t, x-r, y);
+		  v += coeff(+r, 0) * data(t, x+r, y);
+		  v += coeff(0, -r) * data(t, x, y-r);
+		  v += coeff(0, +r) * data(t, x, y+r);
+        }
+    }
+
+public:
+    AxisModStencil2D(StencilList& stencils, int radius=2) :
+        ExampleStencil2D("2axismod", stencils, radius) { }
+    AxisModStencil2D(const string& name, StencilList& stencils, int radius=2) :
+        ExampleStencil2D(name, stencils, radius) { }
+};
+
+REGISTER_STENCIL(AxisModStencil2D);
 
 // Add points from x-y, x-z, and y-z diagonals.
 class DiagStencil : public AxisStencil {
