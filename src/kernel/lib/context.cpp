@@ -1698,7 +1698,7 @@ namespace yask {
     }
 
     /// Get statistics associated with preceding calls to run_solution().
-    yk_stats_ptr StencilContext::get_stats() {
+    yk_stats_ptr StencilContext::get_stats(double energy) {
         ostream& os = get_ostr();
 
         // Calc and report perf.
@@ -1708,9 +1708,10 @@ namespace yask {
             domain_pts_ps = double(tot_domain_1t * steps_done) / rtime;
             writes_ps= double(tot_numWrites_1t * steps_done) / rtime;
             flops = double(tot_numFpOps_1t * steps_done) / rtime;
+            power = energy / rtime;
         }
         else
-            domain_pts_ps = writes_ps = flops = 0.;
+            domain_pts_ps = writes_ps = flops = power = 0.;
         if (steps_done > 0) {
             os <<
                 "num-points-per-step:                    " << makeNumStr(tot_domain_1t) << endl <<
@@ -1721,6 +1722,14 @@ namespace yask {
                 "throughput (num-points/sec):            " << makeNumStr(domain_pts_ps) << endl <<
                 "throughput (est-FLOPS):                 " << makeNumStr(flops) << endl <<
                 "throughput (num-writes/sec):            " << makeNumStr(writes_ps) << endl;
+            if (energy != -1) {
+                os <<
+                    "average-power (watts):                  " << makeNumStr(power) << endl;
+            }
+            else {
+                os <<
+                    "average-power (watts):                  " << "Failed to measure" << endl;
+            }
 #ifdef USE_MPI
             os <<
                 "time in halo exch (sec):                " << makeNumStr(mtime);

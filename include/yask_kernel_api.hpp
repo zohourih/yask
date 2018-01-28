@@ -684,7 +684,7 @@ namespace yask {
            @returns Pointer to statistics object.
         */
         virtual yk_stats_ptr
-        get_stats() =0;
+        get_stats(double) =0;
 
         /// Finish using a solution.
         /**

@@ -192,6 +192,7 @@ namespace yask {
         double domain_pts_ps = 0.; // points-per-sec in domain.
         double writes_ps = 0.;     // writes-per-sec.
         double flops = 0.;      // est. FLOPS.
+	   double power = 0.;      // average power usage during stencil execution
         
         // MPI settings.
         // TODO: move to settings or MPI info object.
@@ -300,7 +301,7 @@ namespace yask {
 
             // Dump stats if get_stats() hasn't been called yet.
             if (steps_done)
-                get_stats();
+                get_stats(0);
 
             // Free mem, reset threads, etc.
             end_solution();
@@ -364,7 +365,7 @@ namespace yask {
            Resets all timers and step counters.
            @returns Pointer to statistics object.
         */
-        virtual yk_stats_ptr get_stats();
+        virtual yk_stats_ptr get_stats(double energy);
 
         // Dealloc grids, etc.
         virtual void end_solution();

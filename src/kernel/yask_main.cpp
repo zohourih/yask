@@ -26,6 +26,7 @@ IN THE SOFTWARE.
 // This code implements the YASK stand-alone performance-measurement tool.
 
 #include "yask.hpp"
+#include "power_cpu.h"
 using namespace std;
 using namespace yask;
 
@@ -223,6 +224,9 @@ int main(int argc, char** argv)
     // Even better to use -start-paused option.
     VTUNE_PAUSE;
 
+    // Parameters for power measurement
+    double energyStart, energyEnd, energyTotal;
+
     // Bootstrap factory from kernel API.
     yk_factory kfac;
 
@@ -326,15 +330,31 @@ int main(int argc, char** argv)
         // Start vtune collection.
         VTUNE_RESUME;
 
+        // Start energy reading
+        energyStart = GetEnergyCPU();
+
         // Actual work.
         context->clear_timers();
         context->calc_rank_opt();
 
+        // End energy reading
+        energyEnd = GetEnergyCPU();
+
         // Stop vtune collection.
         VTUNE_PAUSE;
+
+        // Calculate total energy consumption
+        if (energyStart != -1) // -1 --> failed to read energy values
+        {
+            energyTotal = energyEnd - energyStart;
+        }
+        else
+        {
+            energyTotal = -1;
+        }
             
         // Calc and report perf.
-        auto stats = context->get_stats();
+        auto stats = context->get_stats(energyTotal);
 
         // Remember best.
         if (context->domain_pts_ps > best_dpps) {
