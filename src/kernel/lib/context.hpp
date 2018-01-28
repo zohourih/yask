@@ -192,7 +192,7 @@ namespace yask {
         double domain_pts_ps = 0.; // points-per-sec in domain.
         double writes_ps = 0.;     // writes-per-sec.
         double flops = 0.;      // est. FLOPS.
-	   double power = 0.;      // average power usage during stencil execution
+        double power = 0.;      // average power usage during stencil execution
         
         // MPI settings.
         // TODO: move to settings or MPI info object.
