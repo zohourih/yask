@@ -34,15 +34,15 @@ do
 		temp=`echo "$out" | grep FLOPS -m $k | tail -n 1 | cut -d ":" -f 2 | tr -d '[:space:]' | numfmt --from=auto`
 		flops=`echo "scale=3; $temp/1000000000.0" | bc -l`
 		power=`echo "$out" | grep average-power -m1 | tail -n1 | cut -d ":" -f 2 | tr -d '[:space:]'`
-		timesum=`echo $pointsum+$point | bc -l`
+		timesum=`echo $timesum+$time | bc -l`
 		pointsum=`echo $pointsum+$point | bc -l`
 		flopssum=`echo $flopssum+$flops | bc -l`
 		powersum=`echo $powersum+$power | bc -l`
 	done
+	timeaverage=`echo $timesum/$runs | bc -l`
 	pointaverage=`echo $pointsum/$runs | bc -l`
 	flopsaverage=`echo $flopssum/$runs | bc -l`
 	poweraverage=`echo $powersum/$runs | bc -l`
-	timeaverage=`echo $powersum/$runs | bc -l`
 	echo $i | xargs printf "%-10s"
 	echo $timeaverage | xargs printf "%-15.3f"
 	echo $pointaverage | xargs printf "%-15.3f"
